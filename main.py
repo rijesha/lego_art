@@ -20,11 +20,11 @@ class UI(QMainWindow):
 		
 		# Load the ui file
 		uic.loadUi("main.ui", self)
-		self.previous_desired_width = 0
 
 		# Click The Dropdown Box
 		self.gui_file_browser_btn.clicked.connect(self.open_file_dialog)
 		self.gui_min_lego_dim.valueChanged.connect(self.update_rendering)
+		self.gui_blurring.valueChanged.connect(self.update_rendering)
 		self.gui_desired_output_width_input.setValidator(QDoubleValidator(4,1000,2))
 		self.gui_desired_output_width_input.textChanged.connect(self.update_rendering)
 
@@ -116,9 +116,6 @@ class UI(QMainWindow):
 		
 		output_picture_width = float(self.gui_desired_output_width_input.text())*10
 
-		if self.previous_desired_width == output_picture_width:
-			return
-		
 		if output_picture_width < 40:
 			return
 		
@@ -141,8 +138,9 @@ class UI(QMainWindow):
 		self.gui_number_of_pieces.setText(str(total_lego_pieces) +" (" +str(number_of_lego_width) + "x" + str(number_of_lego_height)  +")" )
 
 		dim =  (number_of_lego_width, number_of_lego_height)
-
-		resized_image = cv2.resize(self.input_image, dim, interpolation=cv2.INTER_CUBIC)
+		blur = int(self.gui_blurring.text())
+		blurred_image = cv2.blur(self.input_image, (blur,blur))
+		resized_image = cv2.resize(blurred_image, dim, interpolation=cv2.INTER_CUBIC)
 
 		lego_image = self.convert_image_to_lego_colours(resized_image)
 

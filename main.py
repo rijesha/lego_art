@@ -53,7 +53,7 @@ class UI(QMainWindow):
 		
 		# Pre-compute arrays for vectorized operations with proper float types
 		self.lab_array_norm_matrix = np.array([c['lab_array_norm'] for c in self.colour_list], dtype=np.float64)
-		self.lab_array_matrix = np.array([c['lab_array'] for c in self.colour_list])
+		self.lab_array_matrix = np.array([c['lab_array'] for c in self.colour_list], dtype=np.uint8)
 
 	def lab_normalization(self, arr1):
 		out = []

@@ -51,15 +51,15 @@ class UI(QMainWindow):
 			c['lab_array'] = out_lab[0,0]
 			c['lab_array_norm'] = self.lab_normalization(c['lab_array'])
 		
-		# Pre-compute arrays for vectorized operations
-		self.lab_array_norm_matrix = np.array([c['lab_array_norm'] for c in self.colour_list])
+		# Pre-compute arrays for vectorized operations with proper float types
+		self.lab_array_norm_matrix = np.array([c['lab_array_norm'] for c in self.colour_list], dtype=np.float64)
 		self.lab_array_matrix = np.array([c['lab_array'] for c in self.colour_list])
 
 	def lab_normalization(self, arr1):
 		out = []
-		out.append(arr1[0]*100/256)
-		out.append(arr1[1] - 128)
-		out.append(arr1[2] - 128)
+		out.append(float(arr1[0]) * 100.0 / 256.0)
+		out.append(float(arr1[1]) - 128.0)
+		out.append(float(arr1[2]) - 128.0)
 		return out
 	
 	def compute_lab_distance(self, arr1, arr2):
@@ -95,11 +95,11 @@ class UI(QMainWindow):
 		lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
 		height, width, depth = lab_image.shape
 
-		# Normalize the entire LAB image at once
-		lab_image_norm = np.zeros((height, width, 3), dtype=np.float32)
-		lab_image_norm[:, :, 0] = lab_image[:, :, 0] * 100 / 256
-		lab_image_norm[:, :, 1] = lab_image[:, :, 1] - 128
-		lab_image_norm[:, :, 2] = lab_image[:, :, 2] - 128
+		# Normalize the entire LAB image at once (proper floating point math, fixing overflow bugs)
+		lab_image_norm = np.zeros((height, width, 3), dtype=np.float64)
+		lab_image_norm[:, :, 0] = lab_image[:, :, 0].astype(np.float64) * 100.0 / 256.0
+		lab_image_norm[:, :, 1] = lab_image[:, :, 1].astype(np.float64) - 128.0
+		lab_image_norm[:, :, 2] = lab_image[:, :, 2].astype(np.float64) - 128.0
 		
 		# Reshape for vectorized computation: (height*width, 3)
 		pixels_flat = lab_image_norm.reshape(-1, 3)

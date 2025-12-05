@@ -1,5 +1,5 @@
 .venv
-__pycache__test_performance.py
+test_performance.py
 __pycache__/
 *.pyc
 lego_bom.csv

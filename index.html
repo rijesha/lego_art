@@ -106,6 +106,12 @@
     <label>Allowed Piece Sizes</label>
     <div class="global-sizes" id="globalSizes"></div>
   </div>
+  <div class="control-group" style="justify-content:flex-end;">
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+      <input type="checkbox" id="showStuds" onchange="scheduleRender()">
+      Show Studs
+    </label>
+  </div>
   <div class="control-group">
     <label for="colorPreset">Color Palette</label>
     <select id="colorPreset" onchange="onPresetSelectChange()">
@@ -1114,11 +1120,40 @@ function buildPlatePlan(targetColors, legoW, legoH) {
   return { legoW, legoH, layers, topColor };
 }
 
-function drawBuild({ legoW, legoH, topColor }) {
+// =============================================================================
+// Shared stud drawing helper
+// =============================================================================
+function drawStuds(ctx, pieces, sp) {
+  if (sp < 5) return; // too small to be meaningful
+  const r = sp * 0.32;
+  for (const p of pieces) {
+    for (let dy = 0; dy < p.h; dy++) {
+      for (let dx = 0; dx < p.w; dx++) {
+        const cx = (p.x + dx) * sp + sp / 2;
+        const cy = (p.y + dy) * sp + sp / 2;
+        const [pr, pg, pb] = hexToRgb(p.color.rgb);
+        // Slightly lighten for the stud
+        const lighten = v => Math.min(255, Math.round(v + (255 - v) * 0.28));
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgb(${lighten(pr)},${lighten(pg)},${lighten(pb)})`;
+        ctx.fill();
+        // Darker ring
+        ctx.lineWidth = sp < 10 ? 0.5 : 1;
+        const darken = v => Math.round(v * 0.72);
+        ctx.strokeStyle = `rgb(${darken(pr)},${darken(pg)},${darken(pb)})`;
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawBuild({ legoW, legoH, topColor, layers }) {
   const STUD_PX = Math.max(1, Math.floor(640 / legoW));
   outputCanvas.width  = legoW * STUD_PX;
   outputCanvas.height = legoH * STUD_PX;
   outputCtx.imageSmoothingEnabled = false;
+  // Draw flat colour fills stud-by-stud from the final topColor map
   for (let y = 0; y < legoH; y++) {
     for (let x = 0; x < legoW; x++) {
       const c = topColor[y * legoW + x];
@@ -1127,6 +1162,13 @@ function drawBuild({ legoW, legoH, topColor }) {
       outputCtx.fillStyle = `rgb(${cr},${cg},${cb})`;
       outputCtx.fillRect(x * STUD_PX, y * STUD_PX, STUD_PX, STUD_PX);
     }
+  }
+  // Stud overlay (all pieces across all layers)
+  if (document.getElementById('showStuds').checked) {
+    outputCtx.imageSmoothingEnabled = true;
+    const allPieces = layers.flatMap(l => l.pieces);
+    drawStuds(outputCtx, allPieces, STUD_PX);
+    outputCtx.imageSmoothingEnabled = false;
   }
   document.getElementById('outputPlaceholder').style.display = 'none';
   outputCanvas.style.display = 'block';
@@ -1289,31 +1331,74 @@ function renderGuide() {
   guideCanvas.style.display = 'block';
   document.getElementById('guidePlaceholder').style.display = 'none';
 
-  // Background (unplaced studs)
-  ctx.fillStyle = '#c8c8c8';
-  ctx.fillRect(0, 0, guideCanvas.width, guideCanvas.height);
-
   const L = guideLayerIndex;
+
+  // --- 1: Build visible colour map (identical to drawBuild topColor logic)
+  const visColor = new Array(legoW * legoH).fill(null);
   for (let li = 0; li <= L; li++) {
     const layer = layers[li];
     if (!layer) continue;
-    ctx.globalAlpha = li < L ? 0.35 : 1.0;
     for (const p of layer.pieces) {
-      const [cr, cg, cb] = hexToRgb(p.color.rgb);
-      ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-      ctx.fillRect(p.x * SP, p.y * SP, p.w * SP, p.h * SP);
-    }
-    if (li === L) {
-      // Outline each piece in the current layer
-      ctx.globalAlpha = 0.45;
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1;
-      for (const p of layer.pieces) {
-        ctx.strokeRect(p.x * SP + 0.5, p.y * SP + 0.5, p.w * SP - 1, p.h * SP - 1);
-      }
+      for (let dy = 0; dy < p.h; dy++)
+        for (let dx = 0; dx < p.w; dx++)
+          visColor[(p.y + dy) * legoW + (p.x + dx)] = p.color;
     }
   }
-  ctx.globalAlpha = 1;
+
+  // --- 2: Background for unplaced studs
+  ctx.fillStyle = '#909090';
+  ctx.fillRect(0, 0, guideCanvas.width, guideCanvas.height);
+
+  // --- 3: Flat colour fills from visColor (same colours as the generator)
+  for (let y = 0; y < legoH; y++) {
+    for (let x = 0; x < legoW; x++) {
+      const c = visColor[y * legoW + x];
+      if (!c) continue;
+      const [cr, cg, cb] = hexToRgb(c.rgb);
+      ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+      ctx.fillRect(x * SP, y * SP, SP, SP);
+    }
+  }
+
+  // Collect all placed pieces for this view
+  const allPlaced = [];
+  for (let li = 0; li <= L; li++) {
+    if (layers[li]) allPlaced.push(...layers[li].pieces);
+  }
+
+  // --- 4: Piece edge outlines using 1px fillRect (no stroke = no bleed).
+  // Each piece darkens its own innermost pixel on all four sides.
+  // Adjacent pieces each contribute 1px → clear 2-px seam between pieces.
+  if (SP >= 4) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    for (const p of allPlaced) {
+      const px = p.x * SP, py = p.y * SP, pw = p.w * SP, ph = p.h * SP;
+      ctx.fillRect(px,          py,          pw, 1); // top
+      ctx.fillRect(px,          py + ph - 1, pw, 1); // bottom
+      ctx.fillRect(px,          py,          1, ph); // left
+      ctx.fillRect(px + pw - 1, py,          1, ph); // right
+    }
+    ctx.restore();
+  }
+
+  // --- 5: Studs (drawn after outlines so circles sit on top)
+  const showStuds = document.getElementById('showStuds').checked;
+  if (showStuds) drawStuds(ctx, allPlaced, SP);
+
+  // --- 6: Dim previous layers (darkens fills, outlines and studs uniformly)
+  if (L > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#000';
+    for (let li = 0; li < L; li++) {
+      if (!layers[li]) continue;
+      for (const p of layers[li].pieces) {
+        ctx.fillRect(p.x * SP, p.y * SP, p.w * SP, p.h * SP);
+      }
+    }
+    ctx.restore();
+  }
 }
 
 function renderGuideList() {

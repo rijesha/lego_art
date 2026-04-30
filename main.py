@@ -50,12 +50,16 @@ class UI(QMainWindow):
 			out_lab = cv2.cvtColor(single_pixel_image, cv2.COLOR_RGB2LAB)
 			c['lab_array'] = out_lab[0,0]
 			c['lab_array_norm'] = self.lab_normalization(c['lab_array'])
+		
+		# Pre-compute arrays for vectorized operations with proper float types
+		self.lab_array_norm_matrix = np.array([c['lab_array_norm'] for c in self.colour_list], dtype=np.float64)
+		self.lab_array_matrix = np.array([c['lab_array'] for c in self.colour_list], dtype=np.uint8)
 
 	def lab_normalization(self, arr1):
 		out = []
-		out.append(arr1[0]*100/256)
-		out.append(arr1[1] - 128)
-		out.append(arr1[2] - 128)
+		out.append(float(arr1[0]) * 100.0 / 256.0)
+		out.append(float(arr1[1]) - 128.0)
+		out.append(float(arr1[2]) - 128.0)
 		return out
 	
 	def compute_lab_distance(self, arr1, arr2):
@@ -91,15 +95,37 @@ class UI(QMainWindow):
 		lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
 		height, width, depth = lab_image.shape
 
-		for i in range(0, height):
-			for j in range(0, width):
-					colour = self.find_closest_colour(lab_image[i,j])
-					lab_image[i,j] = colour['lab_array']
-					if colour['id'] in self.lego_pieces:
-						self.lego_pieces[colour['id']]['count'] = self.lego_pieces[colour['id']]['count'] + 1
-					else:
-						self.lego_pieces[colour['id']] = colour
-						self.lego_pieces[colour['id']]['count'] = 0
+		# Normalize the entire LAB image at once (proper floating point math, fixing overflow bugs)
+		lab_image_norm = np.zeros((height, width, 3), dtype=np.float64)
+		lab_image_norm[:, :, 0] = lab_image[:, :, 0].astype(np.float64) * 100.0 / 256.0
+		lab_image_norm[:, :, 1] = lab_image[:, :, 1].astype(np.float64) - 128.0
+		lab_image_norm[:, :, 2] = lab_image[:, :, 2].astype(np.float64) - 128.0
+		
+		# Reshape for vectorized computation: (height*width, 3)
+		pixels_flat = lab_image_norm.reshape(-1, 3)
+		
+		# Compute distances from all pixels to all colors using broadcasting
+		# pixels_flat shape: (num_pixels, 3)
+		# lab_array_norm_matrix shape: (num_colors, 3)
+		# Result shape: (num_pixels, num_colors)
+		distances = np.sqrt(np.sum((pixels_flat[:, np.newaxis, :] - self.lab_array_norm_matrix[np.newaxis, :, :]) ** 2, axis=2))
+		
+		# Find the index of the closest color for each pixel
+		closest_color_indices = np.argmin(distances, axis=1)
+		
+		# Map each pixel to its closest LAB color
+		lab_image_flat = self.lab_array_matrix[closest_color_indices]
+		lab_image = lab_image_flat.reshape(height, width, 3).astype(np.uint8)
+		
+		# Count occurrences of each color
+		unique_indices, counts = np.unique(closest_color_indices, return_counts=True)
+		
+		for idx, count in zip(unique_indices, counts):
+			colour = self.colour_list[idx]
+			if colour['id'] not in self.lego_pieces:
+				self.lego_pieces[colour['id']] = colour.copy()
+				self.lego_pieces[colour['id']]['count'] = 0
+			self.lego_pieces[colour['id']]['count'] += count
 
 		with open('lego_bom.csv', 'w', newline='') as csv_file: 
 			writer = csv.DictWriter(csv_file, fieldnames=['id','name','rgb','count','is_trans', 'lab_array', 'lab_array_norm', 'rgb_array'])

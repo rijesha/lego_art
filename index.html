@@ -40,6 +40,13 @@
   .bom-section { padding: 16px; }
   .bom-header { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
   .bom-header h2 { font-size: 0.95rem; font-weight: 700; }
+  .cost-chip { margin-left: auto; font-size: 0.8rem; color: #444; background: #f2f2f2; border: 1px solid #ddd; border-radius: 12px; padding: 4px 10px; }
+  .layer-summary { margin-top: 12px; max-width: 560px; }
+  .layer-summary .row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; padding: 5px 8px; border: 1px solid #e5e5e5; border-top: none; font-size: 0.8rem; }
+  .layer-summary .row:first-child { border-top: 1px solid #ddd; background: #f3f3f3; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72rem; }
+  .layer-summary .row.total { background: #fafafa; font-weight: 700; }
+  .width-cm-hint { font-size: 0.72rem; color: #888; margin-top: 2px; display: block; }
+  .guide-final-badge { display: inline-block; font-size: 0.72rem; padding: 2px 7px; border-radius: 10px; background: #e3000b; color: #fff; font-weight: 700; margin-left: 4px; vertical-align: middle; }
   table { border-collapse: collapse; max-width: 560px; font-size: 0.83rem; }
   th, td { padding: 5px 10px; border: 1px solid #ddd; text-align: left; white-space: nowrap; }
   th { background: #eee; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -99,8 +106,9 @@
     <input type="number" id="colorTolerance" min="0" max="30" step="1" value="6">
   </div>
   <div class="control-group">
-    <label for="desiredWidth">Output Width (cm)</label>
-    <input type="number" id="desiredWidth" min="4" max="1000" step="1" value="75">
+    <label for="desiredWidth">Width (studs)</label>
+    <input type="number" id="desiredWidth" min="4" max="500" step="1" value="94">
+    <span class="width-cm-hint" id="widthCmHint">≈ 75.2 cm</span>
   </div>
   <div class="control-group">
     <label>Allowed Piece Sizes</label>
@@ -131,6 +139,7 @@
   <div class="info-item"><span class="info-label">Output Height:</span><span class="info-value" id="infoHeight">—</span></div>
   <div class="info-item"><span class="info-label">Pieces:</span><span class="info-value" id="infoPieces">—</span></div>
   <div class="info-item"><span class="info-label">Layers:</span><span class="info-value" id="infoLayers">—</span></div>
+  <div class="info-item"><span class="info-label">Estimated Cost:</span><span class="info-value" id="infoCost">—</span></div>
 </div>
 
 <div class="tabs">
@@ -158,7 +167,9 @@
 <div class="bom-section">
   <div class="bom-header">
     <h2>Bill of Materials</h2>
+    <span class="cost-chip" id="bomCostChip" style="display:none">Estimated: —</span>
     <button class="btn-secondary" id="downloadBtn" onclick="downloadBOM()" style="display:none">Download BOM CSV</button>
+    <button class="btn-secondary" id="downloadBLBtn" onclick="downloadBrickLinkXML()" style="display:none">Export BrickLink XML</button>
   </div>
   <table id="bomTable" style="display:none">
     <thead>
@@ -166,6 +177,7 @@
     </thead>
     <tbody id="bomBody"></tbody>
   </table>
+  <div id="layerSummary" class="layer-summary" style="display:none"></div>
 </div>
 </div><!-- end tab-generator -->
 
@@ -211,7 +223,7 @@
       <canvas id="guideCanvas" style="display:none;width:100%;height:auto;border:1px solid #ccc;"></canvas>
     </div>
     <div class="guide-sidebar">
-      <div class="guide-list-hdr">Pieces This Layer</div>
+      <div class="guide-list-hdr" id="guideListHdr">Pieces This Layer</div>
       <div class="guide-list" id="guideList"></div>
     </div>
   </div>
@@ -778,6 +790,35 @@ function getColorCategory(c) {
 }
 
 // =============================================================================
+// Piece size → BrickLink / Rebrickable part number (flat plate)
+// =============================================================================
+const SIZE_TO_PARTNUM = {
+  '1x1': '3024', '1x2': '3023', '2x2': '3022',
+  '2x3': '3021', '2x4': '3020', '2x6': '3795', '2x8': '3034',
+};
+
+// =============================================================================
+// Rebrickable color ID → BrickLink color ID
+// (null = no confirmed BrickLink equivalent; will be omitted from BL export)
+// =============================================================================
+const RB_TO_BL_COLOR = {
+  0:11,   1:7,    2:6,    3:39,   4:5,    5:47,   6:8,    7:9,    8:10,   9:62,
+  10:36,  11:40,  12:25,  13:23,  14:3,   15:1,   17:38,  18:33,  19:2,   20:44,
+  21:46,  22:24,  23:109, 25:4,   26:71,  27:34,  28:69,  29:104, 30:157, 31:154,
+  32:13,  33:14,  34:20,  35:108, 36:17,  40:13,  41:15,  42:16,  43:15,  45:50,
+  46:19,  47:12,  52:51,  54:121, 57:18,  60:57,  61:52,  62:64,  64:122, 65:21,
+  68:96,  69:93,  70:88,  71:86,  72:85,  73:42,  74:37,  75:116, 76:117, 77:56,
+  78:90,  79:60,  80:67,  81:70,  82:65,  84:150, 85:89,  86:91,  89:97,  92:28,
+  100:26, 110:43, 112:73, 114:100,115:76, 117:101,118:41, 120:35, 125:32, 129:102,
+  132:111,133:151,134:84, 135:66, 137:78, 142:61, 143:74, 148:77, 150:119,151:99,
+  158:158,178:81, 179:95, 182:98, 183:83, 191:110,212:105,216:27, 226:103,230:107,
+  232:87, 272:63, 288:80, 294:118,297:115,308:120,320:59, 321:153,322:156,323:152,
+  326:155,334:21, 335:58, 351:94, 373:54, 378:48, 379:55, 383:22, 462:31, 484:68,
+  503:49, 1000:159,1050:220,1062:236,1067:225,1068:167,1088:240,1089:241,
+  1091:172,1093:246,1136:167,
+};
+
+// =============================================================================
 // Piece size catalog (common LEGO flat plates, stackable)
 // =============================================================================
 const PIECE_SIZES = [
@@ -803,6 +844,8 @@ PIECE_ROTATIONS_BY_AREA.sort((a, b) => (b.w * b.h) - (a.w * a.h));
 const LEGO_UNIT_MM = 8; // 1 stud = 8 mm
 let sourceImage = null;
 let bom = {};
+let bomPerLayer = [];
+let estimatedTotalCost = 0;
 let debounceTimer = null;
 let enabledIds = null;       // Set<number> of color IDs active for matching
 let enabledSizes = null;     // Set<string> of enabled size keys
@@ -881,10 +924,17 @@ document.getElementById('fileInput').addEventListener('change', e => {
   document.getElementById(id).addEventListener('input', scheduleRender);
   document.getElementById(id).addEventListener('change', scheduleRender);
 });
+document.getElementById('desiredWidth').addEventListener('input', updateWidthHint);
 
 function scheduleRender() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(render, 120);
+}
+
+function updateWidthHint() {
+  const v = parseInt(document.getElementById('desiredWidth').value) || 0;
+  document.getElementById('widthCmHint').textContent =
+    v > 0 ? `\u2248 ${(v * LEGO_UNIT_MM / 10).toFixed(1)} cm` : '';
 }
 
 function setStatus(msg, spinning) {
@@ -926,12 +976,10 @@ function renderWork() {
   const imgH = sourceImage.naturalHeight;
   const aspectRatio = imgW / imgH;
 
-  const desiredWidthCm = parseFloat(document.getElementById('desiredWidth').value) || 75;
-  const desiredWidthMm = desiredWidthCm * 10;
-  const legoW = Math.floor(desiredWidthMm / LEGO_UNIT_MM);
-  const legoH = Math.floor(desiredWidthMm / aspectRatio / LEGO_UNIT_MM);
+  const legoW = Math.max(4, parseInt(document.getElementById('desiredWidth').value) || 94);
+  const legoH = Math.max(2, Math.floor(legoW / aspectRatio));
 
-  if (legoW < 2 || legoH < 2) {
+  if (legoW < 4 || legoH < 2) {
     setStatus('Output too small — increase width.');
     return;
   }
@@ -1020,7 +1068,8 @@ function buildPlatePlan(targetColors, legoW, legoH) {
   }
 
   // Greedy pass over cellList. Tries rotations largest-first; falls back to 1×1.
-  function runPass(cellList, rotations, tolerance) {
+  function runPass(cellList, rotations, tolerance, options = {}) {
+    const allowFallback1x1 = options.allowFallback1x1 !== false;
     const tolSq = tolerance * tolerance;
     const inPass   = new Uint8Array(legoW * legoH); // covered by this pass
     const isTarget = new Uint8Array(legoW * legoH); // in this pass's cell list
@@ -1068,7 +1117,7 @@ function buildPlatePlan(targetColors, legoW, legoH) {
         break;
       }
 
-      if (!placed) {
+      if (!placed && allowFallback1x1) {
         // 1×1 fall-back: use mean colour of just this single stud
         const c = findBestColor([oi]);
         if (c) {
@@ -1088,10 +1137,11 @@ function buildPlatePlan(targetColors, legoW, legoH) {
       allCells.push({ x, y, idx: y * legoW + x });
 
   if (mode === 'single') {
-    layers.push({ index: 0, pieces: runPass(allCells, getRotations(), tol) });
+    layers.push({ index: 0, pieces: runPass(allCells, getRotations(), tol, { allowFallback1x1: true }) });
   } else {
-    // Layer 0: loose tolerance covers all studs with the largest available pieces
-    layers.push({ index: 0, pieces: runPass(allCells, getRotations(), tol === 0 ? 0 : tol * 2) });
+    // Layer 0: only large pieces; no 1x1 fallback so later layers can refine detail.
+    const layer0 = runPass(allCells, getRotations(), tol === 0 ? 0 : tol * 2, { allowFallback1x1: false });
+    if (layer0.length) layers.push({ index: 0, pieces: layer0 });
 
     let maxArea = PIECE_ROTATIONS_BY_AREA.length ? PIECE_ROTATIONS_BY_AREA[0].w * PIECE_ROTATIONS_BY_AREA[0].h : 1;
     for (let li = 1; li < 8; li++) {
@@ -1107,13 +1157,33 @@ function buildPlatePlan(targetColors, legoW, legoH) {
         }
       }
       if (!residual.length) break;
-      // Each correction layer uses smaller pieces than the previous
-      maxArea = Math.max(1, Math.floor(maxArea / 4));
+
+      // Each correction layer uses smaller pieces than the previous.
+      // If a pass cannot place anything yet, continue shrinking instead of aborting.
+      maxArea = Math.max(1, Math.floor(maxArea / 2));
       const rots = getRotations(maxArea);
-      if (!rots.length) break;
-      const pieces = runPass(residual, rots, tol);
-      if (!pieces.length) break;
+      if (!rots.length) continue;
+
+      const allowFallback1x1 = maxArea <= 1 || li >= 6;
+      const pieces = runPass(residual, rots, tol, { allowFallback1x1 });
+      if (!pieces.length) {
+        if (!allowFallback1x1) continue;
+        break;
+      }
       layers.push({ index: li, pieces });
+    }
+
+    // Safety net: ensure every stud gets a piece in multi-layer mode.
+    const remaining = [];
+    for (let y = 0; y < legoH; y++) {
+      for (let x = 0; x < legoW; x++) {
+        const idx = y * legoW + x;
+        if (!topColor[idx]) remaining.push({ x, y, idx });
+      }
+    }
+    if (remaining.length) {
+      const fillPieces = runPass(remaining, getRotations(1), tol, { allowFallback1x1: true });
+      if (fillPieces.length) layers.push({ index: layers.length, pieces: fillPieces });
     }
   }
 
@@ -1177,16 +1247,86 @@ function drawBuild({ legoW, legoH, topColor, layers }) {
 // =============================================================================
 // Bill of Materials
 // =============================================================================
+const PRICE_BY_SIZE = {
+  '1x1': 0.05,
+  '1x2': 0.07,
+  '2x2': 0.10,
+  '2x3': 0.14,
+  '2x4': 0.18,
+  '2x6': 0.24,
+  '2x8': 0.30,
+};
+
+function estimateUnitCost(sizeKey, color) {
+  const base = PRICE_BY_SIZE[sizeKey] || 0.08;
+  let mult = 1.0;
+  const cat = getColorCategory(color);
+  if (color.t) mult = 1.2;
+  if (cat === 'Metallic/Pearl') mult = 1.35;
+  if (cat === 'Chrome' || cat === 'Glitter' || cat === 'Speckle') mult = 1.5;
+  return base * mult;
+}
+
+function money(v) {
+  return '$' + v.toFixed(2);
+}
+
+function renderLayerSummary() {
+  const wrap = document.getElementById('layerSummary');
+  if (!bomPerLayer.length) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+
+  const rows = [
+    '<div class="row"><div>Layer</div><div>Pieces</div><div>Types</div><div>Est. Cost</div></div>'
+  ];
+  for (const l of bomPerLayer) {
+    rows.push(
+      `<div class="row"><div>Layer ${l.index + 1}</div><div>${l.pieceCount}</div><div>${l.uniqueTypes}</div><div>${money(l.estimatedCost)}</div></div>`
+    );
+  }
+  rows.push(
+    `<div class="row total"><div>Total</div><div>${bomPerLayer.reduce((s, l) => s + l.pieceCount, 0)}</div><div>${Object.keys(bom).length}</div><div>${money(estimatedTotalCost)}</div></div>`
+  );
+  wrap.innerHTML = rows.join('');
+  wrap.style.display = '';
+}
+
 function updateBOM(build) {
   const counts = {};
+  const perLayer = [];
+  let totalCost = 0;
+
   for (const layer of build.layers) {
+    const layerCounts = {};
+    let layerCost = 0;
+
     for (const p of layer.pieces) {
       const key = `${p.color.id}_${p.sizeKey}`;
       if (!counts[key]) counts[key] = { color: p.color, sizeKey: p.sizeKey, count: 0 };
       counts[key].count++;
+
+      if (!layerCounts[key]) layerCounts[key] = { color: p.color, sizeKey: p.sizeKey, count: 0 };
+      layerCounts[key].count++;
+
+      layerCost += estimateUnitCost(p.sizeKey, p.color);
     }
+
+    totalCost += layerCost;
+    perLayer.push({
+      index: layer.index,
+      pieceCount: layer.pieces.length,
+      uniqueTypes: Object.keys(layerCounts).length,
+      estimatedCost: layerCost,
+      counts: layerCounts,
+    });
   }
+
   bom = counts;
+  bomPerLayer = perLayer;
+  estimatedTotalCost = totalCost;
 
   const sorted = Object.values(counts).sort((a, b) =>
     b.count !== a.count ? b.count - a.count : a.color.name.localeCompare(b.color.name)
@@ -1205,8 +1345,14 @@ function updateBOM(build) {
     tbody.appendChild(tr);
   }
   const show = sorted.length > 0;
-  document.getElementById('bomTable').style.display   = show ? '' : 'none';
-  document.getElementById('downloadBtn').style.display = show ? '' : 'none';
+  document.getElementById('bomTable').style.display    = show ? '' : 'none';
+  document.getElementById('downloadBtn').style.display  = show ? '' : 'none';
+  document.getElementById('downloadBLBtn').style.display = show ? '' : 'none';
+  document.getElementById('infoCost').textContent = show ? money(estimatedTotalCost) : '—';
+  const chip = document.getElementById('bomCostChip');
+  chip.textContent = `Estimated: ${money(estimatedTotalCost)}`;
+  chip.style.display = show ? '' : 'none';
+  renderLayerSummary();
 }
 
 // Load turtle.jpg (embedded as data URI) as the default image on startup
@@ -1215,6 +1361,7 @@ window.addEventListener('load', () => {
   initGlobalSizes();
   renderColorTable();
   initGuideEvents();
+  updateWidthHint();
 
   if (typeof TURTLE_DATA_URI !== 'undefined') {
     const img = new Image();
@@ -1228,9 +1375,25 @@ function downloadBOM() {
     b.count !== a.count ? b.count - a.count : a.color.name.localeCompare(b.color.name)
   );
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const rows = [['id', 'name', 'rgb', 'is_trans', 'size', 'count'].map(q).join(',')];
+  // Headers use Rebrickable-compatible names (color_id, part_num, quantity)
+  // so this CSV can be imported directly into Rebrickable's part list import.
+  // Extra columns (layer, name, rgb, …) are ignored by importers.
+  const rows = [['layer', 'color_id', 'name', 'rgb', 'is_trans', 'size', 'part_num', 'quantity', 'est_unit_cost', 'est_line_cost'].map(q).join(',')];
   for (const { color: c, sizeKey, count } of sorted) {
-    rows.push([c.id, c.name, c.rgb, c.t ? 't' : 'f', sizeKey, count].map(q).join(','));
+    const unit = estimateUnitCost(sizeKey, c);
+    const partNum = SIZE_TO_PARTNUM[sizeKey] || sizeKey;
+    rows.push(['ALL', c.id, c.name, c.rgb, c.t ? 't' : 'f', sizeKey, partNum, count, unit.toFixed(2), (unit * count).toFixed(2)].map(q).join(','));
+  }
+
+  for (const layer of bomPerLayer) {
+    const layerSorted = Object.values(layer.counts).sort((a, b) =>
+      b.count !== a.count ? b.count - a.count : a.color.name.localeCompare(b.color.name)
+    );
+    for (const { color: c, sizeKey, count } of layerSorted) {
+      const unit = estimateUnitCost(sizeKey, c);
+      const partNum = SIZE_TO_PARTNUM[sizeKey] || sizeKey;
+      rows.push([`Layer ${layer.index + 1}`, c.id, c.name, c.rgb, c.t ? 't' : 'f', sizeKey, partNum, count, unit.toFixed(2), (unit * count).toFixed(2)].map(q).join(','));
+    }
   }
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -1238,6 +1401,40 @@ function downloadBOM() {
   a.download = 'lego_bom.csv';
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function downloadBrickLinkXML() {
+  // BrickLink Wanted List XML format — import via BrickLink → Wanted List → Upload
+  const sorted = Object.values(bom).sort((a, b) =>
+    b.count !== a.count ? b.count - a.count : a.color.name.localeCompare(b.color.name)
+  );
+  const esc = v => String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const items = [];
+  const skipped = [];
+  for (const { color: c, sizeKey, count } of sorted) {
+    const partNum = SIZE_TO_PARTNUM[sizeKey];
+    const blColor = RB_TO_BL_COLOR[c.id];
+    if (!partNum || blColor == null) { skipped.push(`${c.name} ${sizeKey}`); continue; }
+    items.push(
+      `  <ITEM>\n` +
+      `    <ITEMTYPE>P</ITEMTYPE>\n` +
+      `    <ITEMNO>${esc(partNum)}</ITEMNO>\n` +
+      `    <COLOR>${blColor}</COLOR>\n` +
+      `    <MINQTY>${count}</MINQTY>\n` +
+      `    <CONDITION>N</CONDITION>\n` +
+      `    <REMARKS>${esc(c.name)}</REMARKS>\n` +
+      `    <NOTIFY>N</NOTIFY>\n` +
+      `  </ITEM>`
+    );
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<BRICKLINK>\n${items.join('\n')}\n</BRICKLINK>`;
+  const blob = new Blob([xml], { type: 'application/xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'lego_bom_bricklink.xml';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  if (skipped.length) console.warn('BrickLink export: no BL color mapping for:', skipped.join(', '));
 }
 
 // =============================================================================
@@ -1282,9 +1479,10 @@ function toggleColorSize(colorId, sizeKey, enabled) {
 function updateGuide() {
   if (!currentBuild) return;
   const total = currentBuild.layers.length;
-  guideLayerIndex = Math.min(Math.max(0, guideLayerIndex), Math.max(0, total - 1));
+  // total is the extra "Final Render" position; valid indices are 0..total
+  guideLayerIndex = Math.min(Math.max(0, guideLayerIndex), total);
   const slider = document.getElementById('guideLayerSlider');
-  slider.max = Math.max(0, total - 1);
+  slider.max = Math.max(0, total);
   slider.value = guideLayerIndex;
   renderGuide();
   renderGuideList();
@@ -1292,15 +1490,20 @@ function updateGuide() {
 }
 
 function updateGuideCaption() {
+  const el = document.getElementById('guideLayerCaption');
   if (!currentBuild) {
-    document.getElementById('guideLayerCaption').textContent = 'No build yet \u2014 generate an image first.';
+    el.textContent = 'No build yet \u2014 generate an image first.';
     return;
   }
   const L = guideLayerIndex;
+  if (L >= currentBuild.layers.length) {
+    const total = currentBuild.layers.reduce((s, l) => s + l.pieces.length, 0);
+    el.innerHTML = `<span class="guide-final-badge">FINAL</span> Complete build \u2014 ${total} piece${total !== 1 ? 's' : ''} across ${currentBuild.layers.length} layer${currentBuild.layers.length !== 1 ? 's' : ''}`;
+    return;
+  }
   const layer = currentBuild.layers[L];
   const count = layer ? layer.pieces.length : 0;
-  document.getElementById('guideLayerCaption').textContent =
-    `Layer ${L + 1} of ${currentBuild.layers.length} \u2014 place ${count} piece${count !== 1 ? 's' : ''}`;
+  el.textContent = `Layer ${L + 1} of ${currentBuild.layers.length} \u2014 place ${count} piece${count !== 1 ? 's' : ''}`;
 }
 
 function onGuideSlider(val) {
@@ -1312,7 +1515,7 @@ function onGuideSlider(val) {
 
 function guideStepLayer(delta) {
   if (!currentBuild) return;
-  guideLayerIndex = Math.max(0, Math.min(currentBuild.layers.length - 1, guideLayerIndex + delta));
+  guideLayerIndex = Math.max(0, Math.min(currentBuild.layers.length, guideLayerIndex + delta));
   document.getElementById('guideLayerSlider').value = guideLayerIndex;
   renderGuide();
   renderGuideList();
@@ -1321,7 +1524,7 @@ function guideStepLayer(delta) {
 
 function renderGuide() {
   if (!currentBuild) return;
-  const { legoW, legoH, layers } = currentBuild;
+  const { legoW, legoH, layers, topColor } = currentBuild;
   const guideCanvas = document.getElementById('guideCanvas');
   const ctx = guideCanvas.getContext('2d');
   const SP = Math.max(2, Math.floor(640 / legoW));
@@ -1331,9 +1534,41 @@ function renderGuide() {
   guideCanvas.style.display = 'block';
   document.getElementById('guidePlaceholder').style.display = 'none';
 
+  const isFinal = guideLayerIndex >= layers.length;
+
+  if (isFinal) {
+    // ── Final render: complete build identical to the generator output ──
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, guideCanvas.width, guideCanvas.height);
+    for (let y = 0; y < legoH; y++) {
+      for (let x = 0; x < legoW; x++) {
+        const c = topColor[y * legoW + x];
+        if (!c) continue;
+        const [cr, cg, cb] = hexToRgb(c.rgb);
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+        ctx.fillRect(x * SP, y * SP, SP, SP);
+      }
+    }
+    const allPieces = layers.flatMap(l => l.pieces);
+    if (SP >= 4) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      for (const p of allPieces) {
+        const px = p.x * SP, py = p.y * SP, pw = p.w * SP, ph = p.h * SP;
+        ctx.fillRect(px,          py,          pw, 1);
+        ctx.fillRect(px,          py + ph - 1, pw, 1);
+        ctx.fillRect(px,          py,          1, ph);
+        ctx.fillRect(px + pw - 1, py,          1, ph);
+      }
+      ctx.restore();
+    }
+    drawStuds(ctx, allPieces, SP);
+    return;
+  }
+
   const L = guideLayerIndex;
 
-  // --- 1: Build visible colour map (identical to drawBuild topColor logic)
+  // --- 1: Build visible colour map up to current layer
   const visColor = new Array(legoW * legoH).fill(null);
   for (let li = 0; li <= L; li++) {
     const layer = layers[li];
@@ -1345,11 +1580,15 @@ function renderGuide() {
     }
   }
 
-  // --- 2: Background for unplaced studs
-  ctx.fillStyle = '#909090';
-  ctx.fillRect(0, 0, guideCanvas.width, guideCanvas.height);
+  // --- 2: Checker background to indicate unplaced board positions
+  for (let y = 0; y < legoH; y++) {
+    for (let x = 0; x < legoW; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#c4c4c4' : '#b4b4b4';
+      ctx.fillRect(x * SP, y * SP, SP, SP);
+    }
+  }
 
-  // --- 3: Flat colour fills from visColor (same colours as the generator)
+  // --- 3: Flat colour fills from visColor
   for (let y = 0; y < legoH; y++) {
     for (let x = 0; x < legoW; x++) {
       const c = visColor[y * legoW + x];
@@ -1360,42 +1599,73 @@ function renderGuide() {
     }
   }
 
-  // Collect all placed pieces for this view
-  const allPlaced = [];
-  for (let li = 0; li <= L; li++) {
-    if (layers[li]) allPlaced.push(...layers[li].pieces);
+  const currentLayerPieces = layers[L] ? layers[L].pieces : [];
+  const prevPieces = [];
+  for (let li = 0; li < L; li++) {
+    if (layers[li]) prevPieces.push(...layers[li].pieces);
   }
+  const allPlaced = [...prevPieces, ...currentLayerPieces];
 
-  // --- 4: Piece edge outlines using 1px fillRect (no stroke = no bleed).
-  // Each piece darkens its own innermost pixel on all four sides.
-  // Adjacent pieces each contribute 1px → clear 2-px seam between pieces.
+  // --- 4: Seam outlines for all placed pieces
   if (SP >= 4) {
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
     for (const p of allPlaced) {
       const px = p.x * SP, py = p.y * SP, pw = p.w * SP, ph = p.h * SP;
-      ctx.fillRect(px,          py,          pw, 1); // top
-      ctx.fillRect(px,          py + ph - 1, pw, 1); // bottom
-      ctx.fillRect(px,          py,          1, ph); // left
-      ctx.fillRect(px + pw - 1, py,          1, ph); // right
+      ctx.fillRect(px,          py,          pw, 1);
+      ctx.fillRect(px,          py + ph - 1, pw, 1);
+      ctx.fillRect(px,          py,          1, ph);
+      ctx.fillRect(px + pw - 1, py,          1, ph);
     }
     ctx.restore();
   }
 
-  // --- 5: Studs (drawn after outlines so circles sit on top)
-  const showStuds = document.getElementById('showStuds').checked;
-  if (showStuds) drawStuds(ctx, allPlaced, SP);
-
-  // --- 6: Dim previous layers (darkens fills, outlines and studs uniformly)
-  if (L > 0) {
+  // --- 5: Dim previous layers with dark overlay
+  if (prevPieces.length) {
     ctx.save();
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.54;
     ctx.fillStyle = '#000';
-    for (let li = 0; li < L; li++) {
-      if (!layers[li]) continue;
-      for (const p of layers[li].pieces) {
-        ctx.fillRect(p.x * SP, p.y * SP, p.w * SP, p.h * SP);
-      }
+    for (const p of prevPieces) {
+      ctx.fillRect(p.x * SP, p.y * SP, p.w * SP, p.h * SP);
+    }
+    ctx.restore();
+  }
+
+  // --- 6: Studs on current-layer pieces (always shown in guide, regardless of global toggle)
+  if (SP >= 4) drawStuds(ctx, currentLayerPieces, SP);
+
+  // --- 7: Bright white outline highlight around current-layer pieces
+  if (SP >= 3 && currentLayerPieces.length) {
+    ctx.save();
+    ctx.lineWidth = Math.max(1.5, SP * 0.13);
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.shadowColor = 'rgba(255,200,0,0.55)';
+    ctx.shadowBlur = SP * 0.5;
+    for (const p of currentLayerPieces) {
+      const half = ctx.lineWidth / 2;
+      ctx.strokeRect(
+        p.x * SP + half,
+        p.y * SP + half,
+        p.w * SP - ctx.lineWidth,
+        p.h * SP - ctx.lineWidth
+      );
+    }
+    ctx.restore();
+  }
+
+  // --- 8: Size label inside large current-layer pieces
+  if (SP >= 12) {
+    ctx.save();
+    const fs = Math.min(Math.floor(SP * 0.55), 13);
+    ctx.font = `bold ${fs}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const p of currentLayerPieces) {
+      if (p.w * SP < 24 || p.h * SP < 14) continue;
+      const [cr, cg, cb] = hexToRgb(p.color.rgb);
+      const lum = 0.299 * cr + 0.587 * cg + 0.114 * cb;
+      ctx.fillStyle = lum > 140 ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.85)';
+      ctx.fillText(p.sizeKey.replace('x', '\u00d7'), (p.x + p.w / 2) * SP, (p.y + p.h / 2) * SP);
     }
     ctx.restore();
   }
@@ -1403,9 +1673,28 @@ function renderGuide() {
 
 function renderGuideList() {
   if (!currentBuild) return;
-  const layer = currentBuild.layers[guideLayerIndex];
   const listEl = document.getElementById('guideList');
+  const hdr = document.getElementById('guideListHdr');
+  const isFinal = guideLayerIndex >= currentBuild.layers.length;
   listEl.innerHTML = '';
+
+  if (isFinal) {
+    if (hdr) hdr.textContent = 'Complete Build';
+    const totalPieces = currentBuild.layers.reduce((s, l) => s + l.pieces.length, 0);
+    const totalTypes = Object.keys(bom).length;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'padding:10px 8px;font-size:0.82rem;line-height:2;color:#444;';
+    wrap.innerHTML =
+      `<div><strong>${currentBuild.layers.length}</strong> layer${currentBuild.layers.length !== 1 ? 's' : ''}</div>` +
+      `<div><strong>${totalPieces}</strong> total pieces</div>` +
+      `<div><strong>${totalTypes}</strong> unique types</div>` +
+      `<div style="margin-top:6px;font-weight:700;color:#e3000b;">${money(estimatedTotalCost)} est. cost</div>`;
+    listEl.appendChild(wrap);
+    return;
+  }
+
+  if (hdr) hdr.textContent = 'Pieces This Layer';
+  const layer = currentBuild.layers[guideLayerIndex];
   if (!layer) return;
   const groups = {};
   for (const p of layer.pieces) {
